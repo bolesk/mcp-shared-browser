@@ -1,0 +1,19 @@
+[project]
+name = "mcp-multi-session-browser"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "playwright>=1.49.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "mcp>=0.1.0",
+    "playwright-stealth>=0.1.8"
+]
+
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+
