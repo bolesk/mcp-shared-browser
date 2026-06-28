@@ -4,19 +4,10 @@ from typing import Dict, Any, Optional, List
 
 from playwright.async_api import async_playwright, Playwright, Browser as PlaywrightBrowserInstance, BrowserContext, Page
 from playwright_stealth import Stealth
-from interfaces import Browser
+from ports import Browser
 
 class PlaywrightBrowser(Browser):
     def __init__(self, headless: bool = True):
-        """
-        Implements the interfaces.Browser interface using standard Playwright.
-
-        This adapter launches a Playwright Chromium instance and manages separate 
-        isolated BrowserContexts and Pages for different agent sessions.
-
-        Args:
-            headless: Whether to run the browser in headless mode. Defaults to True.
-        """
         self._headless = headless
         self._playwright: Optional[Playwright] = None
         self._browser: Optional[PlaywrightBrowserInstance] = None
@@ -93,7 +84,6 @@ class PlaywrightBrowser(Browser):
         snapshot = await page.aria_snapshot()
         return str(snapshot)
 
-
     async def interact_click(self, agent_id: str, selector_or_id: str) -> str:
         page = self._pages.get(agent_id)
         if not page:
@@ -116,38 +106,37 @@ class PlaywrightBrowser(Browser):
         page = self._pages.get(agent_id)
         if not page:
             return json.dumps([{"error": f"Error: No active tab found for agent {agent_id}"}])
-        
+
         encoded_query = query.replace(" ", "+")
         url = f"https://duckduckgo.com/?q={encoded_query}&ia=web"
-        
+
         try:
             await page.goto(url, wait_until="domcontentloaded")
-            
+
             result_selector = 'article[data-testid="result"]'
             try:
                 await page.wait_for_selector(result_selector, timeout=5000)
             except Exception:
                 return json.dumps([])
-            
+
             articles = await page.locator(result_selector).all()
             serp_results = []
-            
             year_pattern = re.compile(r'\b(19\d\d|20[0-2]\d)\b')
-            
+
             for article in articles:
                 try:
                     link_element = article.locator('a[data-testid="result-title-a"]')
                     title = await link_element.inner_text()
                     url_href = await link_element.get_attribute("href")
-                    
+
                     snippet_element = article.locator('[data-testid="result-snippet"]')
                     description = ""
                     if await snippet_element.count() > 0:
                         description = await snippet_element.inner_text()
-                    
+
                     year_match = year_pattern.search(description)
                     year = year_match.group(0) if year_match else "Non specificato"
-                    
+
                     if url_href and url_href.startswith("http"):
                         serp_results.append({
                             "title": title.strip(),
@@ -157,19 +146,17 @@ class PlaywrightBrowser(Browser):
                         })
                 except Exception:
                     continue
-            
+
             return json.dumps(serp_results)
         except Exception as e:
             return json.dumps([{"error": f"Errore durante il recupero della SERP: {str(e)}"}])
-
 
     async def take_screenshot(self, agent_id: str) -> str:
         page = self._pages.get(agent_id)
         if not page:
             return f"Error: No active tab found for agent {agent_id}"
         screenshot_bytes = await page.screenshot()
-        screenshot_b64 = base64.b64encode(screenshot_bytes).decode("utf-8")
-        return screenshot_b64
+        return base64.b64encode(screenshot_bytes).decode("utf-8")
 
     async def capture_screenshot_to_file(self, agent_id: str, file_path: str) -> str:
         page = self._pages.get(agent_id)
@@ -187,8 +174,7 @@ class PlaywrightBrowser(Browser):
             return f"PDF saved to {file_path}"
         else:
             pdf_bytes = await page.pdf()
-            pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
-            return pdf_b64
+            return base64.b64encode(pdf_bytes).decode("utf-8")
 
     async def wait_for_selector(self, agent_id: str, selector: str, timeout_ms: int = 30000) -> str:
         page = self._pages.get(agent_id)
@@ -239,5 +225,4 @@ class PlaywrightBrowser(Browser):
 
 
 def get_playwright_browser(headless: bool = True) -> Browser:
-    """Factory function to instantiate the Playwright browser adapter."""
     return PlaywrightBrowser(headless=headless)

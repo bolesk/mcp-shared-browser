@@ -5,6 +5,7 @@ from typing import Optional
 from mcp.server.fastmcp import FastMCP, Context
 from delivery.factories import initialize_browser, shutdown_browser, get_browser
 
+
 @asynccontextmanager
 async def mcp_lifespan(server: FastMCP):
     # Detect if running inside Docker
