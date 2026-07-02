@@ -207,6 +207,7 @@ The `VirtualDisplay` port separates display management from browser management. 
 ## Roadmap
 
 - **Tab concurrency limit**: define a maximum number of simultaneous open tabs to cap RAM usage. Agents that request a new tab when the limit is reached are queued and wait until an existing tab is closed before proceeding.
+- **Tests for remaining browser tools**: the current integration tests only cover `search_duckduckgo_serp`. Tools like `interact_click`, `interact_type`, `interact_scroll`, `select_dropdown_option`, `execute_js`, `get_accessibility_tree`, and `wait_for_selector` are not yet tested via an LLM agent. The plan is to write a small self-contained HTML page that exposes known elements and interactions, serve it from a local HTTP server started in the conftest, and have the agent navigate and interact with it to verify each tool.
 
 ---
 
