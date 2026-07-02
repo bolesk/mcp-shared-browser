@@ -1,7 +1,7 @@
 import pytest
 import os
 import tempfile
-from infrastructure import get_playwright_browser
+from adapters import get_playwright_browser
 
 @pytest.mark.asyncio
 async def test_playwright_browser_lifecycle():

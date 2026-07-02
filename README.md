@@ -1,164 +1,108 @@
-# MCP Multi-Session Browser Server
+# mcp-shared-browser
 
-An Advanced Model Context Protocol (MCP) server built with **Clean Architecture / Hexagonal Architecture** in Python. It overcomes the limitations of the standard Playwright MCP server (such as lacking persistent/multiple isolated sessions and downloads handling) and is optimized for automated AI agent interactions.
-
----
-
-## Key Advanced Features
-
-*   **Process-level Session Isolation**: Dynamically routes each connecting agent to its own isolated browser tab/session automatically based on connection transport identifiers.
-*   **Global Lifespan Server Initialization**: Launches and boots the browser instance globally on HTTP server startup (before any client request arrives), eliminating lazy-loading connection delays for agent clients.
-*   **Active Session Reference Counter**: Tracks connected sessions so that the shared browser singleton is only terminated when the last active agent disconnects.
-*   **DuckDuckGo SERP Parser**: A custom Selector-based parser with built-in stealth evasion, allowing organic search queries to resolve reliably without getting blocked by bot filters.
+A Model Context Protocol (MCP) server that lets **multiple AI agents share a single browser deployment**, each with its own isolated tab and session. Built with Python, Playwright, and FastMCP.
 
 ---
 
-## Architecture Setup
+## The Problem with the Official Playwright MCP Server
 
-The project uses Hexagonal Architecture to separate business logic from external drivers:
-*   `domain/`: Pure business models and entities (independent of Playwright/MCP).
-*   `usecase/`: Application business rules and port definitions.
-*   `infrastructure/`: Adapters for external services (e.g. `PlaywrightBrowser` implementing the browser ports).
-*   `interfaces/`: Interface declarations (ABC ports like `Browser`).
-*   `delivery/`: Entry points, including the MCP server tool definitions and CLI.
+The [official Playwright MCP server](https://github.com/microsoft/playwright-mcp) has two significant limitations:
 
----
+- **Single-agent only**: it runs as a local process tied to one client. A second agent connecting is blocked. Every agent needs its own separate process, its own deployment, its own browser instance — making shared or remote deployments impractical.
+- **No web search tool**: it exposes raw browser primitives (navigate, click, screenshot) but provides no built-in tool for performing a web search and getting back structured results. Agents have to navigate to a search engine, parse the HTML, and extract results themselves — which breaks under bot detection.
 
-## Bypassing Headless Scraper Blocks via Xvfb
-
-### The Challenge: JA3/TLS Fingerprinting
-Modern search engines and CDNs (like DuckDuckGo/Cloudflare) detect and block standard Playwright headless browsers (`headless=True`) immediately at the network handshake level, returning `HTTP/2 400 Bad Request` or CAPTCHA pages. 
-This occurs because headless Chromium generates a unique **TLS fingerprint (JA3)** that matches automated bots, even when user agents and webdriver parameters are customized.
-
-### The Solution: Xvfb & Headful Browser in Docker
-To run the server headlessly in a production environment (like a VPS or Docker container) without being blocked:
-1.  **Headful Browser (`headless=False`)**: We configure Playwright to run in headful mode, which uses Chrome's standard desktop TLS handshake fingerprint and passes bot checks natively.
-2.  **Xvfb (X Virtual Framebuffer)**: Inside the headless Linux environment, we launch a virtual display server in RAM. Playwright runs the headful browser inside this virtual buffer, keeping it invisible and memory-only.
-3.  **The Docker `--init` / `init: true` Requirement**: When running in Docker, we must run the container with the `init` system. Docker runs container commands as PID 1 by default, which does not forward signals or reap zombie processes. This causes the `xvfb-run` wrapper to hang during screen setup. The `init` system inserts a lightweight init system (`tini`), allowing child Xvfb processes to start and clean up properly.
+This makes it impractical to build multi-agent systems that share a browser, or to give agents a reliable web search capability without running into blocks.
 
 ---
 
-## Multi-Session Agent Routing Logic
+## How mcp-shared-browser Works
 
-Rather than relying on client applications (which may not support it) manually passing a `client_id` parameter inside the JSON-RPC `_meta` object, the server automatically resolves a unique agent session ID (`_resolve_agent_id`) using the underlying connection properties:
-1.  **Streamable HTTP (Recommended)**: Extracts the unique session identifier from the `mcp-session-id` request header.
-2.  **SSE (Server-Sent Events)**: Extracts the unique session identifier from the `session_id` URL query parameter.
-3.  **Memory Address Fallback**: Falls back to the memory address of the connection session object (`id(ctx.session)`). This is unique and persistent for each active client socket, making session isolation 100% robust out of the box.
+This server runs as a **persistent HTTP service**. Any number of agents can connect to it simultaneously over Streamable HTTP or SSE. Each connecting agent is automatically routed to its own isolated browser tab — no configuration needed, no manual session management.
 
----
+```
+┌─────────────────────────────────────────┐
+│         mcp-shared-browser (VPS)        │
+│                                         │
+│  Agent A ──→ Tab A  (amazon.com)        │
+│  Agent B ──→ Tab B  (github.com)        │
+│  Agent C ──→ Tab C  (duckduckgo.com)    │
+│                                         │
+│  Single Chromium process, shared        │
+└─────────────────────────────────────────┘
+```
 
-## Testing Strategy and Execution
-
-The test suite validates every layer of the Hexagonal Architecture and ensures that the server can run both on local development machines (with a physical UI) and remote headless servers (using virtual framebuffers).
-
-### What the Tests Verify
-
-The project contains three main test modules under the `tests/` directory:
-
-1.  **Adapter Integration Tests** ([tests/adapters/test_playwright_browser.py](file:///Users/massimomontanaro/projects/python/mcp/mcp_multi_session_browser/tests/adapters/test_playwright_browser.py))
-    *   **`test_playwright_browser_lifecycle`**: Instantiates the `PlaywrightBrowser` adapter directly (in headful mode) and runs all core actions: opening tabs, navigation (via mock data HTML), click and fill interactions, accessibility tree snapshot generation, screenshot-to-file captures, base64 screenshot conversion, and tab closure.
-    *   **`test_playwright_browser_search_queries`**: Runs multiple queries consecutively against DuckDuckGo to verify that the selectors correctly parse results, and that the stealth configurations (TLS fingerprinting bypass) prevent blocks.
-
-2.  **Lifespan Management Tests** ([tests/delivery/test_lifespan.py](file:///Users/massimomontanaro/projects/python/mcp/mcp_multi_session_browser/tests/delivery/test_lifespan.py))
-    *   **`test_mcp_lifespan`**: Verifies that Uvicorn/FastMCP lifespan events correctly control the browser singleton. It asserts that the browser singleton cannot be accessed before server startup, is successfully initialized and shared during active server runtime, and is safely closed and disposed of upon server shutdown.
-
-3.  **MCP Tool Integration Tests** ([tests/delivery/test_tools.py](file:///Users/massimomontanaro/projects/python/mcp/mcp_multi_session_browser/tests/delivery/test_tools.py))
-    *   **`test_mcp_tools_lifecycle`**: Simulates an actual client connection using a mocked `Context` object with unique agent client IDs. It verifies that the FastMCP tool wrappers (`open_tab`, `navigate`, `execute_js`, `close_tab`) correctly intercept context routing and invoke the underlying browser ports.
+Session isolation is automatic. The server extracts a unique identifier from the connection transport (`mcp-session-id` header for Streamable HTTP, `session_id` query param for SSE, or socket memory address as fallback) and maps it to a dedicated `BrowserContext` and `Page`.
 
 ---
 
-### How to Run the Tests
+## Bot Detection Bypass
 
-#### Local Execution (macOS / Windows Desktop)
-On local environments with a physical display, you can run the entire test suite directly. The tests will physically launch headful browser windows on your screen so you can observe the actions:
+Standard headless Playwright is blocked immediately by DuckDuckGo, Cloudflare, and most search engines via TLS/JA3 fingerprinting — even with custom user agents. The fix is running Chromium in **headful mode**, which uses the standard desktop TLS handshake.
+
+On a server without a physical display, this server automatically launches an **Xvfb virtual framebuffer** (managed by `pyvirtualdisplay`) so the headful browser has a display to render into without consuming any visible screen. On macOS or Windows development machines, the browser window opens normally.
+
+---
+
+## Available Tools
+
+| Tool | Description |
+|---|---|
+| `open_tab` | Opens an isolated browser tab for the current agent |
+| `close_tab` | Closes the agent's tab and frees resources |
+| `navigate` | Navigates to a URL |
+| `execute_js` | Executes arbitrary JavaScript and returns the result |
+| `get_console_logs` | Returns captured console messages and errors |
+| `get_accessibility_tree` | Returns an ARIA snapshot of the page for LLM consumption |
+| `interact_click` | Clicks an element by CSS selector |
+| `interact_type` | Types text into an input field |
+| `interact_scroll` | Scrolls the page in a direction by pixel amount |
+| `select_dropdown_option` | Selects a value in a `<select>` dropdown |
+| `wait_for_selector` | Waits until an element appears on the page |
+| `wait_for_load_state` | Waits for a page load state (`load`, `domcontentloaded`, `networkidle`) |
+| `wait` | Pauses execution for a given number of milliseconds |
+| `take_screenshot` | Returns a base64-encoded screenshot of the current page |
+| `capture_screenshot_to_file` | Saves a screenshot to a file path on the server |
+| `save_as_pdf` | Saves the page as PDF, to file or as base64 |
+| `search_duckduckgo_serp` | Searches DuckDuckGo and returns structured JSON results |
+
+---
+
+## Quickstart
+
+### Local (macOS / Windows)
 
 ```bash
-# Sync dependencies
+# Install dependencies
 uv sync
 
-# Run all tests
-uv run pytest -v
-
-# Run only a specific test file (e.g. adapter tests)
-uv run pytest tests/adapters/test_playwright_browser.py -v
-```
-
-#### Headless Linux Execution (Docker + Xvfb)
-To test the virtual framebuffer implementation in an environment matching your production server (e.g. Linux container without a physical display):
-
-1.  **Build the Docker Image**:
-    ```bash
-    docker build -t mcp-browser-test .
-    ```
-2.  **Run the Container**:
-    *   *Note*: The `--init` flag is required so that process signals and child Xvfb processes are correctly managed.
-    ```bash
-    docker run --init --rm mcp-browser-test
-    ```
-
----
-
-## Running the Server (Streamable HTTP / SSE)
-
-The server defaults to **Streamable HTTP** transport (the modern bidirectional standard for web-hosted MCP servers), but can be configured to use **SSE** via environment variables.
-
-### Configuration Environment Variables
-All FastMCP settings can be configured using environment variables prefixed with `FASTMCP_`:
-*   `FASTMCP_HOST`: Host to bind to (e.g. `0.0.0.0` for container networks, default `127.0.0.1`).
-*   `FASTMCP_PORT`: Port to listen on (default `8000`).
-*   `MCP_TRANSPORT`: Override transport layer (`streamable-http` or `sse`, default `streamable-http`).
-*   `BROWSER_HEADLESS`: Enable/disable headless mode (default `false` to enable headful bot block bypass via Xvfb).
-
-### Local Server Launch
-To start the HTTP server locally:
-```bash
+# Start the server (opens a real browser window)
 uv run main.py
 ```
-This runs the server on `http://127.0.0.1:8000`. The Streamable HTTP endpoint will be at `http://127.0.0.1:8000/mcp`.
 
-### Docker Production Execution (with Xvfb)
+The server starts on `http://127.0.0.1:8000`. The MCP endpoint is at `/mcp`.
 
-#### Option A: Docker Compose (Recommended)
-A preconfigured [docker-compose.yml](file:///Users/massimomontanaro/projects/python/mcp/mcp_multi_session_browser/docker-compose.yml) is included to simplify deployment, mapping the required virtual framebuffers and lifecycle signals automatically:
+### Docker (Linux / VPS)
+
+A single command builds and starts the server with Xvfb running automatically:
 
 ```bash
-# Build and start the container in background
 docker compose up --build -d
-
-# Monitor server logs
-docker compose logs -f
-
-# Shut down the container
-docker compose down
 ```
 
-#### Option B: Standalone Docker Command
-Alternatively, build and run the container manually:
+The server will be available at `http://your-server:8000/mcp`.
 
-```bash
-# Build the server image
-docker build -t mcp-browser-server .
-
-# Run exposing port 8000 using xvfb-run
-docker run --init -p 8000:8000 \
-  -e FASTMCP_HOST=0.0.0.0 \
-  -e FASTMCP_PORT=8000 \
-  --rm mcp-browser-server xvfb-run --server-args="-screen 0 1920x1080x24" uv run main.py
-```
-The server will now be listening on `http://localhost:8000/mcp`.
+> **Note**: The `init: true` setting in `docker-compose.yml` is required. It inserts a lightweight init system (tini) so that child Xvfb processes spawned by pyvirtualdisplay are correctly managed and do not become zombies.
 
 ---
 
-## Client Configurations (Claude Desktop / Cursor / Agent SDKs)
+## Connecting Your Agent
 
-To connect your MCP client (such as Claude Desktop, Cursor, or custom SDKs) to this running HTTP server, add the server entry to your configuration JSON file (e.g. `claude_desktop_config.json` or `mcp_config.json`):
+### Claude Desktop / Cursor (Streamable HTTP)
 
-### 1. Streamable HTTP Configuration (Recommended)
-Use this configuration for modern clients supporting Streamable HTTP:
 ```json
 {
   "mcpServers": {
-    "multi-session-browser": {
+    "shared-browser": {
       "url": "http://localhost:8000/mcp",
       "transport": "streamable-http"
     }
@@ -166,15 +110,62 @@ Use this configuration for modern clients supporting Streamable HTTP:
 }
 ```
 
-### 2. SSE Configuration (Legacy Fallback)
-If your client only supports SSE, ensure you start the server with the environment variable `MCP_TRANSPORT=sse` and use this configuration:
-```json
-{
-  "mcpServers": {
-    "multi-session-browser": {
-      "url": "http://localhost:8000/sse",
-      "transport": "sse"
-    }
-  }
-}
+---
+
+## Configuration
+
+| Variable | Default | Description |
+|---|---|---|
+| `FASTMCP_HOST` | `127.0.0.1` | Host to bind to (`0.0.0.0` for containers) |
+| `FASTMCP_PORT` | `8000` | Port to listen on |
+| `BROWSER_HEADLESS` | `false` | Set to `true` to disable bot-bypass mode |
+
+---
+
+## Running the Tests
+
+### Local
+
+```bash
+uv run pytest -v
 ```
+
+Tests open a real browser window. You can watch the interactions live.
+
+### Docker
+
+```bash
+docker build -t mcp-shared-browser-test .
+docker run --init --rm mcp-shared-browser-test
+```
+
+Tests run inside Docker with Xvfb automatically started by the test session fixture — no `xvfb-run` wrapper needed.
+
+---
+
+## Architecture
+
+The project uses Hexagonal Architecture:
+
+```
+ports/       → Browser and VirtualDisplay abstractions (ABCs)
+adapters/    → PlaywrightBrowser, XvfbDisplay, NoopDisplay implementations
+delivery/    → FastMCP tool definitions, singleton lifecycle management
+main.py      → HTTP server entry point (Uvicorn + Streamable HTTP / SSE)
+```
+
+The `VirtualDisplay` port separates display management from browser management. The two are started in sequence by the server lifespan (`display.start()` → `browser.init()`), but neither object knows about the other. On macOS, `NoopDisplay` is used (no-op). On Docker, `XvfbDisplay` starts a 1920×1080 virtual framebuffer before Playwright launches.
+
+---
+
+## Roadmap
+
+- **Tab concurrency limit**: define a maximum number of simultaneous open tabs to cap RAM usage. Agents that request a new tab when the limit is reached are queued and wait until an existing tab is closed before proceeding.
+
+---
+
+## Requirements
+
+- Python 3.12+
+- [uv](https://github.com/astral-sh/uv)
+- For Docker: Docker with Compose v2

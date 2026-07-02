@@ -18,10 +18,8 @@ COPY pyproject.toml uv.lock* /app/
 RUN uv sync --no-cache
 
 # Copy project source code
-COPY domain/ /app/domain/
-COPY usecase/ /app/usecase/
-COPY infrastructure/ /app/infrastructure/
-COPY interfaces/ /app/interfaces/
+COPY ports/ /app/ports/
+COPY adapters/ /app/adapters/
 COPY delivery/ /app/delivery/
 COPY tests/ /app/tests/
 COPY main.py /app/
@@ -29,9 +27,6 @@ COPY main.py /app/
 # Set env so Playwright uses the system-installed browsers from the base image
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# Set display environment variable for Xvfb
-ENV DISPLAY=:99
-
-# Run tests under xvfb-run
-CMD ["xvfb-run", "--server-args=-screen 0 1920x1080x24", "uv", "run", "pytest", "-v"]
+# Python manages Xvfb lifecycle via pyvirtualdisplay
+CMD ["uv", "run", "pytest", "-v"]
 
