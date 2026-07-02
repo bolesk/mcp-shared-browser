@@ -8,19 +8,12 @@ from delivery.factories import initialize_browser, shutdown_browser, get_browser
 
 @asynccontextmanager
 async def mcp_lifespan(server: FastMCP):
-    # Detect if running inside Docker
-    in_docker = os.path.exists("/.dockerenv")
-    
-    # Configure headless mode: default to False (headed) to bypass bot detection.
-    # On local machines, this opens a physical browser window.
-    # In Docker/headless environments, this works inside the Xvfb virtual display.
+    # Default to headful mode: bypasses TLS/JA3 bot fingerprinting.
+    # On macOS/Windows this opens a physical window; in Docker pyvirtualdisplay handles it.
     headless_str = os.getenv("BROWSER_HEADLESS")
-    if headless_str is not None:
-        headless = headless_str.lower() not in ("false", "0", "no")
-    else:
-        headless = False
-        
-    print(f"Starting shared browser (headless={headless}, docker={in_docker})...")
+    headless = headless_str.lower() not in ("false", "0", "no") if headless_str is not None else False
+
+    print(f"Starting shared browser (headless={headless})...")
     await initialize_browser(headless=headless)
     yield
     print("Stopping shared browser...")

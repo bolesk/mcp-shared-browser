@@ -3,29 +3,14 @@ import anyio
 import uvicorn
 from contextlib import asynccontextmanager
 from delivery.app import mcp
-from delivery.factories import initialize_browser, shutdown_browser
 
 @asynccontextmanager
 async def wrapped_lifespan(app_inst, original_lifespan):
-    # Detect headless mode
-    headless_str = os.getenv("BROWSER_HEADLESS")
-    if headless_str is not None:
-        headless = headless_str.lower() not in ("false", "0", "no")
+    if original_lifespan:
+        async with original_lifespan(app_inst) as ctx:
+            yield ctx
     else:
-        headless = False
-    in_docker = os.path.exists("/.dockerenv")
-    
-    print(f"Starting shared browser globally at server startup (headless={headless}, docker={in_docker})...", flush=True)
-    await initialize_browser(headless=headless)
-    try:
-        if original_lifespan:
-            async with original_lifespan(app_inst) as ctx:
-                yield ctx
-        else:
-            yield
-    finally:
-        print("Stopping shared browser globally at server shutdown...", flush=True)
-        await shutdown_browser()
+        yield
 
 def run_http_server(transport: str):
     if transport == "streamable-http":
@@ -43,9 +28,8 @@ def run_http_server(transport: str):
 
     app.router.lifespan_context = custom_lifespan
 
-    # Read host and port from FastMCP settings
-    host = mcp.settings.host
-    port = mcp.settings.port
+    host = os.getenv("FASTMCP_HOST", mcp.settings.host)
+    port = int(os.getenv("FASTMCP_PORT", mcp.settings.port))
     log_level = mcp.settings.log_level.lower()
 
     config = uvicorn.Config(app, host=host, port=port, log_level=log_level)
