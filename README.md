@@ -158,6 +158,12 @@ The `VirtualDisplay` port separates display management from browser management. 
 
 ---
 
+## Roadmap
+
+- **Tab concurrency limit**: define a maximum number of simultaneous open tabs to cap RAM usage. Agents that request a new tab when the limit is reached are queued and wait until an existing tab is closed before proceeding.
+
+---
+
 ## Requirements
 
 - Python 3.12+
