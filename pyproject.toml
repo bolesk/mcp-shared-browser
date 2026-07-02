@@ -17,4 +17,10 @@ dependencies = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 
+[dependency-groups]
+dev = [
+    "openai-agents>=0.17.7",
+    "requests>=2.34.2",
+]
+
 
