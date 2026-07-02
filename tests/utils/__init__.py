@@ -1,4 +1,4 @@
 from .mcp_config import StdioMCPConfig, StreamableHttpMCPConfig
-from .agent import BrowserAgent
+from .agent import Agent, AgentResponse
 
-__all__ = ["BrowserAgent", "StdioMCPConfig", "StreamableHttpMCPConfig"]
+__all__ = ["Agent", "AgentResponse", "StdioMCPConfig", "StreamableHttpMCPConfig"]

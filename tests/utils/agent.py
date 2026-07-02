@@ -1,8 +1,9 @@
 from contextlib import asynccontextmanager
 from typing import TypeVar, Optional
 from pydantic import BaseModel
-from agents import Agent, Runner, AsyncOpenAI, OpenAIChatCompletionsModel, set_tracing_disabled
+from agents import Agent as SDKAgent, Runner, AsyncOpenAI, OpenAIChatCompletionsModel, set_tracing_disabled, ModelSettings
 from agents.mcp import MCPServerStdio, MCPServerStreamableHttp
+from agents.items import ToolCallItem
 
 from tests.utils.mcp_config import StdioMCPConfig, StreamableHttpMCPConfig
 
@@ -13,7 +14,18 @@ T = TypeVar("T", bound=BaseModel)
 MCPConfig = StdioMCPConfig | StreamableHttpMCPConfig
 
 
-class BrowserAgent:
+class AgentResponse[T]:
+    def __init__(self, output: str | T, tools_called: list[str]):
+        self.output = output
+        self.tools_called = tools_called
+
+    def assert_tool_called(self, tool_name: str):
+        assert tool_name in self.tools_called, (
+            f"Expected tool '{tool_name}' to be called, but only these were called: {self.tools_called}"
+        )
+
+
+class Agent:
     def __init__(
         self,
         *,
@@ -58,23 +70,43 @@ class BrowserAgent:
             async with self._build_mcp_server() as server:
                 yield [server]
 
-    async def get_response(self, prompt: str, output_model: type[T] | None = None) -> str | T:
+    async def _run(self, prompt: str, servers: list, output_model: type[T] | None) -> tuple[str | T, list[str]]:
+        model_settings = ModelSettings(tool_choice="required") if servers else ModelSettings()
+        agent = SDKAgent(
+            name="Agent",
+            instructions=self._instructions,
+            mcp_servers=servers,
+            model=self._model,
+            model_settings=model_settings,
+            output_type=output_model,
+        )
+        result = await Runner.run(agent, prompt, max_turns=6)
+        tools_called = [
+            item.tool_name
+            for item in result.new_items
+            if isinstance(item, ToolCallItem)
+        ]
+        return result.final_output, tools_called
+
+    async def get_response(self, prompt: str, output_model: type[T] | None = None) -> AgentResponse[T]:
         async with self._mcp_context() as servers:
-            agent = Agent(
-                name="BrowserAgent",
-                instructions=self._instructions,
-                mcp_servers=servers,
-                model=self._model,
-                output_type=output_model,
+            if output_model is not None and servers:
+                # Step 1: fetch data using MCP tools, get raw string output
+                raw_output, tools_called = await self._run(prompt, servers, output_model=None)
+
+                # Step 2: format raw output into structured Pydantic model (no MCP tools needed)
+                formatted_output, _ = await self._run(
+                    f"Convert the following text into the required structured format:\n\n{raw_output}",
+                    servers=[],
+                    output_model=output_model,
+                )
+            else:
+                formatted_output, tools_called = await self._run(prompt, servers, output_model)
+
+        if output_model is not None and not isinstance(formatted_output, output_model):
+            raise TypeError(
+                f"Expected output of type {output_model.__name__}, "
+                f"got {type(formatted_output).__name__}"
             )
-            result = await Runner.run(agent, prompt)
-            final_output = result.final_output
 
-            if output_model is not None:
-                if not isinstance(final_output, output_model):
-                    raise TypeError(
-                        f"Expected output of type {output_model.__name__}, "
-                        f"got {type(final_output).__name__}"
-                    )
-
-            return final_output
+        return AgentResponse(output=formatted_output, tools_called=tools_called)

@@ -16,6 +16,10 @@ dependencies = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+filterwarnings = [
+    # openai-agents uses a deprecated mcp transport class internally — upstream bug
+    "ignore::DeprecationWarning:contextlib",
+]
 
 [dependency-groups]
 dev = [
