@@ -124,22 +124,68 @@ The server will be available at `http://your-server:8000/mcp`.
 
 ## Running the Tests
 
-### Local
+The test suite is split into three groups with different requirements.
+
+### Unit and adapter tests
 
 ```bash
-uv run pytest -v
+uv run pytest tests/adapters/ tests/delivery/ -v
 ```
 
-Tests open a real browser window. You can watch the interactions live.
+No external dependencies. On macOS a real Chromium window will open during adapter tests.
 
-### Docker
+### Docker (adapter tests in a headless environment)
 
 ```bash
 docker build -t mcp-shared-browser-test .
 docker run --init --rm mcp-shared-browser-test
 ```
 
-Tests run inside Docker with Xvfb automatically started by the test session fixture — no `xvfb-run` wrapper needed.
+Xvfb is started automatically by the test session fixture via `pyvirtualdisplay` — no `xvfb-run` wrapper needed.
+
+### Integration tests (LLM agent + MCP server)
+
+```bash
+uv run pytest tests/integration/ -v
+```
+
+These tests verify that a real LLM agent correctly uses the MCP browser tools end-to-end. They require two external processes, both started automatically by `tests/integration/conftest.py`:
+
+- **llama-server** — the [llama.cpp](https://github.com/ggerganov/llama.cpp) inference server, started on port `8080` with an 80k context window
+- **mcp-shared-browser** — this server, started on port `8000` in headed mode
+
+The conftest polls both servers on their health endpoints before running any test, with a 120-second startup timeout.
+
+**Prerequisites:**
+
+- `llama-server` binary available in `$PATH` (install via llama.cpp)
+- A compatible GGUF model downloaded to `~/models/gemma-4-E4B-it-Q8_0.gguf`
+
+To download the model via the Hugging Face CLI:
+
+```bash
+pip install huggingface_hub
+huggingface-cli download bartowski/gemma-4-E4B-it-GGUF \
+  gemma-4-E4B-it-Q8_0.gguf \
+  --local-dir ~/models
+```
+
+> **Note**: make sure no other process is already listening on ports `8080` or `8000` before running the integration tests, as the conftest starts its own instances.
+
+#### Manual verification script
+
+To test the agent interactively with servers you start yourself:
+
+```bash
+# Terminal 1
+uv run main.py
+
+# Terminal 2
+llama-server --model ~/models/gemma-4-E4B-it-Q8_0.gguf -c 81920 --port 8080
+
+# Terminal 3
+uv run verify_agent_mcp.py
+```
 
 ---
 
